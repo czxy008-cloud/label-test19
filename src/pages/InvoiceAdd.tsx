@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import {
   Form,
   Input,
@@ -10,26 +10,37 @@ import {
   Col,
   message,
   Space,
-  Upload,
   Divider,
-  InputNumber
+  InputNumber,
+  Switch,
+  Tag
 } from 'antd'
 import {
   UploadOutlined,
   SaveOutlined,
-  ArrowLeftOutlined
+  ArrowLeftOutlined,
+  StarOutlined
 } from '@ant-design/icons'
 import { useNavigate, useParams } from 'react-router-dom'
-import type { Category, Invoice } from '../types'
+import type { Category, Invoice, ReimbursePerson } from '../types'
 import dayjs from 'dayjs'
+
+const statusOptions = [
+  { value: 'normal', label: '正常', color: '#52c41a' },
+  { value: 'pending', label: '待报销', color: '#fa8c16' },
+  { value: 'reimbursed', label: '已报销', color: '#1677ff' },
+  { value: 'void', label: '已作废', color: '#f5222d' }
+]
 
 const InvoiceAdd: React.FC = () => {
   const navigate = useNavigate()
   const { id } = useParams()
   const [form] = Form.useForm()
   const [categories, setCategories] = useState<Category[]>([])
+  const [reimbursePersons, setReimbursePersons] = useState<ReimbursePerson[]>([])
   const [loading, setLoading] = useState(false)
   const [parsing, setParsing] = useState(false)
+  const isProcessingRef = useRef(false)
 
   const isEdit = !!id
 
@@ -42,6 +53,15 @@ const InvoiceAdd: React.FC = () => {
     }
   }
 
+  const loadReimbursePersons = async () => {
+    try {
+      const data = await window.electronAPI.reimbursePerson.getAll()
+      setReimbursePersons(data)
+    } catch (error) {
+      message.error('加载报销人失败')
+    }
+  }
+
   const loadInvoice = async () => {
     if (!id) return
     try {
@@ -49,7 +69,8 @@ const InvoiceAdd: React.FC = () => {
       if (data) {
         form.setFieldsValue({
           ...data,
-          invoice_date: data.invoice_date ? dayjs(data.invoice_date) : null
+          invoice_date: data.invoice_date ? dayjs(data.invoice_date) : null,
+          is_favorite: data.is_favorite === 1
         })
       }
     } catch (error) {
@@ -59,15 +80,19 @@ const InvoiceAdd: React.FC = () => {
 
   useEffect(() => {
     loadCategories()
+    loadReimbursePersons()
     loadInvoice()
   }, [id])
 
-  const handleFileUpload = async (file: File) => {
+  const handleFileUpload = async () => {
+    if (isProcessingRef.current || parsing) {
+      return
+    }
+    isProcessingRef.current = true
     setParsing(true)
     try {
       const filePath = await window.electronAPI.invoice.openFile()
       if (!filePath) {
-        setParsing(false)
         return
       }
 
@@ -92,13 +117,14 @@ const InvoiceAdd: React.FC = () => {
       message.error('PDF解析出错')
     } finally {
       setParsing(false)
+      isProcessingRef.current = false
     }
-    return false
   }
 
   const handleSubmit = async (values: any) => {
     setLoading(true)
     try {
+      const currentInvoice = isEdit && id ? await window.electronAPI.invoice.getById(Number(id)) : null
       const submitData = {
         ...values,
         invoice_date: values.invoice_date ? values.invoice_date.format('YYYY-MM-DD') : null,
@@ -107,7 +133,10 @@ const InvoiceAdd: React.FC = () => {
         tax_amount: values.tax_amount !== undefined && values.tax_amount !== null && values.tax_amount !== ''
           ? Number(values.tax_amount) : 0,
         total_amount: values.total_amount !== undefined && values.total_amount !== null && values.total_amount !== ''
-          ? Number(values.total_amount) : 0
+          ? Number(values.total_amount) : 0,
+        is_favorite: values.is_favorite ? 1 : 0,
+        status: values.status || 'normal',
+        file_path: values.file_path || currentInvoice?.file_path || null
       }
 
       if (isEdit && id) {
@@ -125,14 +154,6 @@ const InvoiceAdd: React.FC = () => {
     }
   }
 
-  const beforeUpload = (file: File) => {
-    const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')
-    if (!isPdf) {
-      message.error('只能上传PDF文件')
-    }
-    return isPdf
-  }
-
   return (
     <div>
       <Card
@@ -147,19 +168,15 @@ const InvoiceAdd: React.FC = () => {
         {!isEdit && (
           <>
             <div style={{ textAlign: 'center', marginBottom: 16 }}>
-              <Upload
-                accept=".pdf"
-                showUploadList={false}
-                beforeUpload={handleFileUpload}
+              <Button
+                htmlType="button"
+                icon={<UploadOutlined />}
+                loading={parsing}
+                size="large"
+                onClick={handleFileUpload}
               >
-                <Button
-                  icon={<UploadOutlined />}
-                  loading={parsing}
-                  size="large"
-                >
-                  上传PDF发票自动解析
-                </Button>
-              </Upload>
+                上传PDF发票自动解析
+              </Button>
             </div>
             <Divider>或手动填写</Divider>
           </>
@@ -170,7 +187,9 @@ const InvoiceAdd: React.FC = () => {
           layout="vertical"
           onFinish={handleSubmit}
           initialValues={{
-            category_id: null
+            category_id: null,
+            status: 'normal',
+            is_favorite: false
           }}
         >
           <Row gutter={24}>
@@ -230,6 +249,54 @@ const InvoiceAdd: React.FC = () => {
                       </span>
                     )
                   }))}
+                />
+              </Form.Item>
+            </Col>
+          </Row>
+
+          <Row gutter={24}>
+            <Col span={12}>
+              <Form.Item
+                name="reimburse_person_id"
+                label="报销人"
+              >
+                <Select
+                  placeholder="请选择报销人"
+                  allowClear
+                  options={reimbursePersons.map(p => ({
+                    value: p.id,
+                    label: p.name + (p.department ? ` (${p.department})` : '')
+                  }))}
+                />
+              </Form.Item>
+            </Col>
+            <Col span={6}>
+              <Form.Item
+                name="status"
+                label="状态"
+              >
+                <Select
+                  placeholder="选择状态"
+                  options={statusOptions.map(s => ({
+                    value: s.value,
+                    label: (
+                      <span>
+                        <Tag color={s.color}>{s.label}</Tag>
+                      </span>
+                    )
+                  }))}
+                />
+              </Form.Item>
+            </Col>
+            <Col span={6}>
+              <Form.Item
+                name="is_favorite"
+                label="关注"
+                valuePropName="checked"
+              >
+                <Switch
+                  checkedChildren={<StarOutlined style={{ color: '#faad14' }} />}
+                  unCheckedChildren={<StarOutlined />}
                 />
               </Form.Item>
             </Col>
@@ -312,6 +379,10 @@ const InvoiceAdd: React.FC = () => {
             label="备注"
           >
             <Input.TextArea rows={3} placeholder="请输入备注信息" />
+          </Form.Item>
+
+          <Form.Item name="file_path" hidden>
+            <Input type="hidden" />
           </Form.Item>
 
           <Form.Item>

@@ -6,7 +6,10 @@ import {
   AppstoreOutlined,
   BarChartOutlined,
   BulbOutlined,
-  BulbFilled
+  BulbFilled,
+  UserOutlined,
+  HistoryOutlined,
+  FolderOutlined
 } from '@ant-design/icons'
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useTheme } from '../theme'
@@ -36,9 +39,24 @@ const MainLayout: React.FC = () => {
       label: <Link to="/categories">分类管理</Link>
     },
     {
+      key: '/reimburse-persons',
+      icon: <UserOutlined />,
+      label: <Link to="/reimburse-persons">报销人管理</Link>
+    },
+    {
+      key: '/invoice-sets',
+      icon: <FolderOutlined />,
+      label: <Link to="/invoice-sets">发票集管理</Link>
+    },
+    {
       key: '/statistics',
       icon: <BarChartOutlined />,
       label: <Link to="/statistics">数据统计</Link>
+    },
+    {
+      key: '/operation-logs',
+      icon: <HistoryOutlined />,
+      label: <Link to="/operation-logs">操作日志</Link>
     }
   ]
 
